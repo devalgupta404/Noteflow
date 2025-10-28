@@ -1,9 +1,0 @@
-{
-  "dependencies": {
-    "mammoth": "^1.11.0",
-    "natural": "^8.1.0",
-    "pdf-parse": "^2.4.5",
-    "sharp": "^0.34.4",
-    "tesseract.js": "^6.0.1"
-  }
-}

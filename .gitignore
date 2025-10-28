@@ -3,6 +3,10 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+# Ignore package manifests (user-requested)
+/package.json
+/frontend/package.json
+/backend/package.json
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
@@ -96,9 +100,11 @@ jspm_packages/
 .nuxt
 dist
 
-# Gatsby files
+# Gatsby files (do not ignore all public folders globally)
 .cache/
-public
+# If you have a Gatsby app, ignore its specific public output directory instead of all "public" dirs
+# e.g. gatsby-site/public
+# gatsby-site/public
 
 # Storybook build outputs
 .out
