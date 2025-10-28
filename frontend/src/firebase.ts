@@ -4,14 +4,24 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDN2mBpSwxb9Xng_VVf84U1339w46E1vXw",
-  authDomain: "noteflow-941ab.firebaseapp.com",
-  projectId: "noteflow-941ab",
-  storageBucket: "noteflow-941ab.firebasestorage.app",
-  messagingSenderId: "59757267195",
-  appId: "1:59757267195:web:8a2b43a746588b1a96885e",
-  measurementId: "G-F3WTXKQELD"
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY || "",
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN || "",
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID || "",
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || "",
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID || "",
+  appId: process.env.REACT_APP_FIREBASE_APP_ID || "",
+  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID || ""
 };
+
+// Basic guard to help debug missing env vars in development
+if (!firebaseConfig.apiKey || !firebaseConfig.projectId || !firebaseConfig.authDomain) {
+  // Only log non-sensitive identifiers
+  // Do not log apiKey
+  // eslint-disable-next-line no-console
+  console.error(
+    'Missing Firebase env vars. Check REACT_APP_FIREBASE_API_KEY, REACT_APP_FIREBASE_AUTH_DOMAIN, REACT_APP_FIREBASE_PROJECT_ID in frontend/.env and restart the dev server.'
+  );
+}
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);

@@ -244,10 +244,10 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
       });
     }
 
-    // Get quiz
-    const quiz = await Quiz.findOne({
-      _id: req.params.id,
-      userId: req.user._id,
+  // Get quiz (use consistent id fields like other routes)
+  const quiz = await Quiz.findOne({
+      id: req.params.id,
+      userId: req.user.id,
       isActive: true
     });
 
@@ -263,7 +263,7 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
     let correctAnswers = 0;
 
     for (const answer of answers) {
-      const question = quiz.questions.id(answer.questionId);
+      const question = quiz.questions.find(q => (q.id || q._id?.toString()) === answer.questionId);
       if (!question) continue;
 
       let isCorrect = false;

@@ -1251,16 +1251,20 @@ Return JSON:
     }
   }
 
-  // Generate quiz questions from document content
+  // Generate quiz questions from document content using Groq API
   async generateQuiz(documentContent, subject, questionCount = 5) {
     try {
-      const prompt = `
+      // Truncate content to stay well within Groq request limits
+      const HARD_LIMIT = 8000; // characters
+      let truncatedContent = (documentContent || '').slice(0, HARD_LIMIT);
+
+      const buildPrompt = (content) => `
         Generate ${questionCount} quiz questions based on the following document content.
         
         Subject: ${subject}
         
         Document Content:
-        ${documentContent}
+        ${content}
         
         Requirements:
         1. Create a mix of question types (multiple choice, true/false, short answer)
@@ -1269,7 +1273,7 @@ Return JSON:
         4. Provide clear, unambiguous correct answers
         5. Include explanations for answers
         
-        Format as JSON:
+        Respond with a single JSON object only (no Markdown, no code fences), with this exact shape:
         {
           "questions": [
             {
@@ -1285,37 +1289,74 @@ Return JSON:
         }
       `;
 
-      const response = await axios.post(
-        `${this.baseUrl}/models/gemini-1.5-flash:generateContent?key=${this.geminiApiKey}`,
-        {
-          contents: [{
-            parts: [{
-              text: prompt
-            }]
-          }],
-          generationConfig: {
+      const callGroq = async ({ content, model = "llama-3.1-70b-versatile", maxTokens = 1200 }) => {
+        return axios.post(
+          `${this.groqBaseUrl}/chat/completions`,
+          {
+            model,
+            messages: [
+              {
+                role: "system",
+                content: "You are an expert quiz generator. Always respond with valid JSON only, no markdown formatting."
+              },
+              {
+                role: "user",
+                content: buildPrompt(content)
+              }
+            ],
             temperature: 0.3,
-            topK: 40,
-            topP: 0.95,
-            maxOutputTokens: 2048
+            max_tokens: maxTokens,
+            // Enforce JSON response if supported
+            response_format: { type: 'json_object' }
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${this.groqApiKeys[this.currentGroqKeyIndex]}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+      };
+
+      // First attempt (bigger model, truncated content)
+      let response;
+      try {
+        response = await callGroq({ content: truncatedContent, model: "llama-3.1-70b-versatile", maxTokens: 1200 });
+      } catch (err) {
+        // Retry with smaller content and lighter model if we hit a request error (like 400)
+        const RETRY_LIMIT = 4000;
+        const smallerContent = truncatedContent.slice(0, RETRY_LIMIT);
+        try {
+          response = await callGroq({ content: smallerContent, model: "llama-3.1-8b-instant", maxTokens: 900 });
+        } catch (err2) {
+          // Rotate Groq key and try once more with smallest content
+          if (this.groqApiKeys.length > 1) {
+            this.currentGroqKeyIndex = (this.currentGroqKeyIndex + 1) % this.groqApiKeys.length;
+            const tiniestContent = smallerContent.slice(0, 2500);
+            response = await callGroq({ content: tiniestContent, model: "llama-3.1-8b-instant", maxTokens: 800 });
+          } else {
+            throw err2;
           }
         }
-      );
+      }
 
-      console.log('Gemini API response:', JSON.stringify(response.data, null, 2));
-      
-      if (!response.data.candidates || response.data.candidates.length === 0) {
-        console.error('No candidates in response:', response.data);
-        throw new Error('No candidates in Gemini API response');
+      console.log('Groq API response:', JSON.stringify(response.data, null, 2));
+
+      if (!response || !response.data) {
+        throw new Error('Empty response from Groq');
+      }
+      if (!response.data.choices || response.data.choices.length === 0) {
+        console.error('No choices in response:', response.data);
+        throw new Error('No choices in Groq API response');
       }
       
-      const candidate = response.data.candidates[0];
-      if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
-        console.error('No content in candidate:', candidate);
-        throw new Error('No content in Gemini API response');
+      const choice = response.data.choices[0];
+      if (!choice.message || typeof choice.message.content !== 'string') {
+        console.error('No message content in response:', response.data);
+        throw new Error('No message content in Groq API response');
       }
       
-      const content = candidate.content.parts[0].text;
+      const content = choice.message.content.trim();
       
       try {
         // Clean the content to remove markdown code blocks

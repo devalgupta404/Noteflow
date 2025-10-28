@@ -156,8 +156,8 @@ export const quizAPI = {
   getById: (id: string) =>
     api.get(`/quiz/${id}`),
   
-  submit: (data: { quizId: string; answers: any[] }) =>
-    api.post('/quiz/submit', data),
+  submit: (data: { quizId: string; answers: any[]; timeSpent?: number }) =>
+    api.post(`/quiz/${data.quizId}/submit`, { answers: data.answers, timeSpent: data.timeSpent }),
   
   getAttempts: (quizId: string) =>
     api.get(`/quiz/${quizId}/attempts`),
