@@ -143,6 +143,9 @@ export const lectureAPI = {
   
   resumeLecture: (lectureId: string) =>
     api.get(`/lecture/resume/${lectureId}`),
+
+  flashcards: (data: { documentId?: string; text?: string; count?: number }) =>
+    api.post('/lecture/flashcards', data),
 };
 
 // Quiz API

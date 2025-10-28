@@ -96,9 +96,17 @@ const InteractiveLecture: React.FC<InteractiveLectureProps> = ({ documentId, onC
   const [showingExample, setShowingExample] = useState<number | null>(null);
   const [wasPlayingBeforeDoubt, setWasPlayingBeforeDoubt] = useState(false);
   const [lecturePausedForDoubt, setLecturePausedForDoubt] = useState(false);
+  const [flashcards, setFlashcards] = useState<Array<{front: string; back: string; hint?: string; difficulty?: string; tags?: string[]}> | null>(null);
+  const [flashLoading, setFlashLoading] = useState(false);
+  const [flashError, setFlashError] = useState('');
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const recordingRef = useRef<MediaRecorder | null>(null);
+  const flashRequestedRef = useRef(false);
+  const forceServerTTSRef = useRef(false); // revert: prefer browser TTS by default
+  // Track TTS progress for precise resume
+  const ttsTextRef = useRef<string>("");
+  const ttsSpokenCharsRef = useRef<number>(0);
 
   // Memoize current slide data to prevent unnecessary re-renders
   const currentSlideData = useMemo(() => {
@@ -155,6 +163,11 @@ const InteractiveLecture: React.FC<InteractiveLectureProps> = ({ documentId, onC
         
         setLecture(lectureData);
         console.log('🎯 Set lecture data, current slide will be:', lectureData.slides[0]);
+        // Auto-generate flashcards once per lecture load
+        if (!flashRequestedRef.current) {
+          flashRequestedRef.current = true;
+          try { await generateFlashcards(); } catch { /* handled in generator */ }
+        }
       } else if (lectureData && lectureData.lectures) {
         // Individual slide-based lectures format (L1, L2, L3...)
         console.log(`✅ Individual lectures loaded successfully with ${lectureData.lectures.length} lectures`);
@@ -189,6 +202,11 @@ const InteractiveLecture: React.FC<InteractiveLectureProps> = ({ documentId, onC
         
         setLecture(convertedLecture);
         console.log('🎯 Set converted lecture data, current slide will be:', convertedLecture.slides[0]);
+        // Auto-generate flashcards once per lecture load
+        if (!flashRequestedRef.current) {
+          flashRequestedRef.current = true;
+          try { await generateFlashcards(); } catch { /* handled in generator */ }
+        }
       } else {
         console.error('❌ Invalid lecture data structure:', lectureData);
         throw new Error('Invalid lecture data structure');
@@ -231,18 +249,67 @@ const InteractiveLecture: React.FC<InteractiveLectureProps> = ({ documentId, onC
 
   // Text-to-speech with fallback and example highlighting
   const speakText = useCallback(async (text: string) => {
+    let cleanText = text;
     try {
       console.log('🎤 Starting TTS process...');
       console.log('📝 Text to be spoken:', text.substring(0, 100) + '...');
       
+      // Normalize verbose tokens to punctuation for better speech
+      const normalizeForSpeech = (raw: string) => {
+        let s = raw;
+        s = s.replace(/\bbacktick\b/gi, '`');
+        s = s.replace(/```[\s\S]*?```/g, ''); // drop code fences and contents
+        s = s.replace(/\bsingle quote\b/gi, "'");
+        s = s.replace(/\bdouble quote\b/gi, '"');
+        s = s.replace(/\bopen parenthesis\b/gi, '(');
+        s = s.replace(/\bclose parenthesis\b/gi, ')');
+        s = s.replace(/\bcolon\b/gi, ':');
+        s = s.replace(/\bcomma\b/gi, ',');
+        s = s.replace(/\bperiod\b/gi, '.');
+        s = s.replace(/\bquestion mark\b/gi, '?');
+        s = s.replace(/\bexclamation mark\b/gi, '!');
+        s = s.replace(/\bdot\b/gi, '.');
+        s = s.replace(/\bhash\b/gi, '#');
+        // Tighten spaces before punctuation
+        s = s.replace(/\s+([,.:;!?\)\]])/g, '$1');
+        // Normalize multiple spaces
+        s = s.replace(/\s{2,}/g, ' ');
+        return s.trim();
+      };
+      cleanText = normalizeForSpeech(text);
+      if (cleanText !== text) {
+        console.log('🧹 Normalized speech text preview:', cleanText.substring(0, 100) + '...');
+      }
+      
       // Reset example highlighting
       setShowingExample(null);
+      ttsTextRef.current = cleanText;
+      ttsSpokenCharsRef.current = 0;
       
-      // Try browser's built-in speech synthesis first (free and works offline)
+      // Prefer server TTS for reliability and consistent resume
+      if (forceServerTTSRef.current) {
+        const response = await lectureAPI.textToSpeech({ text: cleanText, voice: 'alloy' });
+        let audioBlob = response.data as Blob;
+        if (!audioBlob.type || !audioBlob.type.startsWith('audio/')) {
+          audioBlob = new Blob([audioBlob], { type: 'audio/mpeg' });
+        }
+        const audioUrl = URL.createObjectURL(audioBlob);
+        if (audioRef.current) {
+          audioRef.current.src = audioUrl;
+          audioRef.current.volume = isMuted ? 0 : volume;
+          audioRef.current.load();
+          await audioRef.current.play();
+          setIsPlaying(true);
+          setIsPaused(false);
+        }
+        return;
+      }
+
+      // Otherwise use browser TTS
       if ('speechSynthesis' in window) {
         console.log('🎤 Using browser TTS (SpeechSynthesis API)');
         
-        const utterance = new SpeechSynthesisUtterance(text);
+        const utterance = new SpeechSynthesisUtterance(cleanText);
         utterance.volume = isMuted ? 0 : volume;
         utterance.rate = 0.9;
         utterance.pitch = 1;
@@ -264,8 +331,12 @@ const InteractiveLecture: React.FC<InteractiveLectureProps> = ({ documentId, onC
         
         // Add event listeners for example highlighting
         utterance.onboundary = (event) => {
+          if (typeof event.charIndex === 'number') {
+            // Approximate spoken position
+            ttsSpokenCharsRef.current = Math.max(ttsSpokenCharsRef.current, event.charIndex);
+          }
           if (event.name === 'word') {
-            const word = text.substring(event.charIndex, event.charIndex + event.charLength).toLowerCase();
+            const word = cleanText.substring(event.charIndex, event.charIndex + event.charLength).toLowerCase();
             // Check if we're mentioning an example
             if (word.includes('example') || word.includes('let') || word.includes('here') || word.includes('show')) {
               // Find the next example to highlight
@@ -292,11 +363,13 @@ const InteractiveLecture: React.FC<InteractiveLectureProps> = ({ documentId, onC
         };
         
         utterance.onerror = (event) => {
-          console.error('🎤 TTS error:', event.error);
-          // Don't treat "interrupted" as a real error
-          if (event.error !== 'interrupted') {
-            setIsPlaying(false);
+          // "interrupted" happens when we cancel/resume; not a real error
+          if (event.error === 'interrupted') {
+            console.log('🎤 TTS interrupted (expected during cancel/resume)');
+            return;
           }
+          console.error('🎤 TTS error:', event.error);
+          setIsPlaying(false);
         };
         
         utterance.onpause = () => {
@@ -309,30 +382,40 @@ const InteractiveLecture: React.FC<InteractiveLectureProps> = ({ documentId, onC
           setIsPaused(false);
         };
         
-        // Cancel any existing speech before starting new one
+        // Ensure any prior speech is stopped, then speak
         speechSynthesis.cancel();
-        
-        // Add a small delay to ensure the speech synthesis is ready
+        // Give the engine a brief moment to settle, then start
         setTimeout(() => {
-          speechSynthesis.speak(utterance);
-        }, 100);
+          try {
+            speechSynthesis.speak(utterance);
+          } catch (e) {
+            console.warn('🎤 Fallback speak attempt');
+            speechSynthesis.cancel();
+            speechSynthesis.speak(utterance);
+          }
+        }, 250);
         return;
       }
       
-      // Fallback to API TTS
-      const response = await lectureAPI.textToSpeech({ text, voice: 'alloy' });
-      const audioBlob = response.data;
+      // Final fallback
+      const response = await lectureAPI.textToSpeech({ text: cleanText, voice: 'alloy' });
+      let audioBlob = response.data as Blob;
+      if (!audioBlob.type || !audioBlob.type.startsWith('audio/')) {
+        audioBlob = new Blob([audioBlob], { type: 'audio/mpeg' });
+      }
       const audioUrl = URL.createObjectURL(audioBlob);
-      
       if (audioRef.current) {
         audioRef.current.src = audioUrl;
         audioRef.current.volume = isMuted ? 0 : volume;
+        audioRef.current.load();
         await audioRef.current.play();
+        setIsPlaying(true);
+        setIsPaused(false);
       }
     } catch (error) {
       console.error('TTS error:', error);
       // Final fallback: just log the text
-      console.log('📢 Speaking:', text);
+      console.log('📢 Speaking:', cleanText);
     }
   }, [volume, isMuted, currentSlideData]);
 
@@ -362,7 +445,23 @@ const InteractiveLecture: React.FC<InteractiveLectureProps> = ({ documentId, onC
       setIsPaused(false);
       // Resume browser TTS if it was paused
       if ('speechSynthesis' in window) {
+        // Try native resume first
         speechSynthesis.resume();
+        // If still not speaking, continue from last known position
+        setTimeout(async () => {
+          try {
+            if (!speechSynthesis.speaking) {
+              const retrySlide = lecture.slides[currentSlide];
+              const script = retrySlide?.voiceScript || ttsTextRef.current;
+              if (script) {
+                const resumeFrom = Math.min(Math.max(ttsSpokenCharsRef.current - 20, 0), script.length - 1);
+                const remaining = script.slice(resumeFrom);
+                console.log('🎤 Resume precise: continuing from char', resumeFrom);
+                await speakText(remaining);
+              }
+            }
+          } catch {}
+        }, 250);
       } else if (audioRef.current) {
         audioRef.current.play();
       }
@@ -427,6 +526,24 @@ const InteractiveLecture: React.FC<InteractiveLectureProps> = ({ documentId, onC
     // Stop audio element
     audioRef.current?.pause();
     audioRef.current?.load();
+  };
+
+  // Generate flashcards via backend
+  const generateFlashcards = async () => {
+    try {
+      setFlashLoading(true);
+      setFlashError('');
+      const res = await lectureAPI.flashcards({ documentId, count: 12 });
+      const cards = res.data.cards || res.data?.flashcards || [];
+      // eslint-disable-next-line no-console
+      console.log('🗂️ Flashcards received:', Array.isArray(cards) ? cards.length : 0);
+      setFlashcards(cards);
+    } catch (e: any) {
+      console.error('Flashcards error:', e);
+      setFlashError(e.response?.data?.error || 'Failed to generate flashcards');
+    } finally {
+      setFlashLoading(false);
+    }
   };
 
   const handlePrevious = useCallback(() => {
@@ -867,94 +984,40 @@ const InteractiveLecture: React.FC<InteractiveLectureProps> = ({ documentId, onC
 
       {/* Main Content */}
       <Box sx={{ flex: 1, display: 'flex' }}>
-        {/* Slide Content */}
+        {/* Main Content (Flashcards-first) */}
         <Box sx={{ flex: 1, p: 3, position: 'relative' }}>
           <Card sx={{ height: '100%' }}>
             <CardContent>
               <Typography variant="h4" gutterBottom>
-                {currentSlideData.title}
+                {flashcards && flashcards.length > 0 ? 'Flashcards' : currentSlideData.title}
               </Typography>
               
-              {/* Key Points and Examples */}
-              <Box sx={{ display: 'flex', gap: 2, mt: 3 }}>
-                {/* Key Points */}
-                {currentSlideData.keyPoints && currentSlideData.keyPoints.length > 0 && (
-                  <Paper elevation={3} sx={{ p: 3, flex: 1 }}>
-                    <Typography variant="h6" gutterBottom color="primary">
-                      📌 Key Points
-                    </Typography>
-                    {currentSlideData.keyPoints.map((point, index) => (
-                      <Box key={index} sx={{ mb: 1, display: 'flex', alignItems: 'flex-start' }}>
-                        <Typography variant="body2" sx={{ mr: 1, color: 'primary.main' }}>
-                          •
-                        </Typography>
-                        <Typography variant="body2">
-                          {typeof point === 'string' ? point : point.title || point.content || JSON.stringify(point)}
-                        </Typography>
+              {/* Flashcards primary view */}
+              {flashcards && flashcards.length > 0 ? (
+                <Box sx={{ mt: 1, display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
+                  {flashcards.map((c, i) => (
+                    <Paper key={i} elevation={3} sx={{ p: 2 }}>
+                      <Typography variant="subtitle1">{i + 1}. {c.front}</Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>Answer: {c.back}</Typography>
+                      {c.hint ? <Typography variant="caption" color="text.secondary">Hint: {c.hint}</Typography> : null}
+                      <Box sx={{ mt: 1, display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                        {c.difficulty ? <Chip size="small" label={c.difficulty} /> : null}
+                        {(c.tags || []).slice(0, 4).map((t, ti) => (
+                          <Chip key={ti} size="small" variant="outlined" label={t} />
+                        ))}
                       </Box>
-                    ))}
-                  </Paper>
-                )}
-
-                {/* Examples */}
-                {currentSlideData.examples && currentSlideData.examples.length > 0 && (
-                  <Paper elevation={3} sx={{ p: 3, flex: 1 }}>
-                    <Typography variant="h6" gutterBottom color="secondary">
-                      💡 Examples
-                    </Typography>
-                    {currentSlideData.examples.map((example, index) => (
-                      <Box 
-                        key={index} 
-                        sx={{ 
-                          mb: 1, 
-                          display: 'flex', 
-                          alignItems: 'flex-start',
-                          p: showingExample === index ? 2 : 1,
-                          borderRadius: showingExample === index ? '8px' : '4px',
-                          bgcolor: showingExample === index ? 'primary.light' : 'transparent',
-                          border: showingExample === index ? '2px solid' : 'none',
-                          borderColor: showingExample === index ? 'primary.main' : 'transparent',
-                          transition: 'all 0.3s ease-in-out',
-                          transform: showingExample === index ? 'scale(1.02)' : 'scale(1)',
-                          boxShadow: showingExample === index ? 3 : 0
-                        }}
-                      >
-                        <Typography variant="body2" sx={{ mr: 1, color: 'secondary.main' }}>
-                          •
-                        </Typography>
-                        <Typography variant="body2">
-                          {typeof example === 'string' ? example : example.title || example.content || JSON.stringify(example)}
-                        </Typography>
-                      </Box>
-                    ))}
-                  </Paper>
-                )}
-              </Box>
-
-              {/* PDF Slide Display (if available) */}
-              {currentSlideData.pdfSlide && (
-                <Paper elevation={3} sx={{ p: 3, mt: 3 }}>
-                  <Typography variant="h6" gutterBottom>📄 PDF Slide</Typography>
-                  <Box sx={{ 
-                    border: '1px solid #ccc', 
-                    borderRadius: '8px', 
-                    p: 2, 
-                    bgcolor: '#f9f9f9',
-                    minHeight: 200,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    <Typography variant="body2" color="text.secondary">
-                      PDF slide content would be displayed here
-                    </Typography>
-                  </Box>
-                </Paper>
+                    </Paper>
+                  ))}
+                </Box>
+              ) : (
+                // Fallback: show original slide content while flashcards generate
+                <>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>Generating flashcards...</Typography>
+                  <Typography variant="body1" sx={{ mt: 2 }}>
+                    {currentSlideData.content}
+                  </Typography>
+                </>
               )}
-
-              <Typography variant="body1" sx={{ mt: 2 }}>
-                {currentSlideData.content}
-              </Typography>
             </CardContent>
           </Card>
         </Box>
@@ -1139,6 +1202,37 @@ const InteractiveLecture: React.FC<InteractiveLectureProps> = ({ documentId, onC
           >
             Ask Question
           </Button>
+
+          {/* Flashcards */}
+          <Box mb={3}>
+            <Typography variant="h6" gutterBottom>🗂️ Flashcards</Typography>
+            {flashLoading && (
+              <Typography variant="caption" color="text.secondary">Generating flashcards...</Typography>
+            )}
+            {flashError && (
+              <Alert severity="error" sx={{ mt: 1 }}>{flashError}</Alert>
+            )}
+            {flashcards && flashcards.length > 0 && (
+              <Box sx={{ mt: 2, maxHeight: 260, overflowY: 'auto', display: 'grid', gridTemplateColumns: '1fr', gap: 1 }}>
+                {flashcards.map((c, i) => (
+                  <Paper key={i} sx={{ p: 1 }}>
+                    <Typography variant="subtitle2">Q{i+1}. {c.front}</Typography>
+                    <Typography variant="body2" color="text.secondary">Answer: {c.back}</Typography>
+                    {c.hint ? <Typography variant="caption" color="text.secondary">Hint: {c.hint}</Typography> : null}
+                    <Box sx={{ mt: 0.5, display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                      {c.difficulty ? <Chip size="small" label={c.difficulty} /> : null}
+                      {(c.tags || []).slice(0,3).map((t, ti) => <Chip key={ti} size="small" variant="outlined" label={t} />)}
+                    </Box>
+                  </Paper>
+                ))}
+              </Box>
+            )}
+            {flashcards && flashcards.length === 0 && !flashLoading && !flashError && (
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                No flashcards returned. Try again or with a different document.
+              </Typography>
+            )}
+          </Box>
 
           {/* Conversation History */}
           <Typography variant="h6" gutterBottom>

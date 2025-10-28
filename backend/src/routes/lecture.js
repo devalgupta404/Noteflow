@@ -3,6 +3,7 @@ const router = express.Router();
 const aiService = require('../services/aiService');
 const voiceService = require('../services/voiceService');
 const { authenticateToken } = require('../middleware/auth');
+const Document = require('../models/Document');
 
 // Generate comprehensive lecture with flowcharts
 router.post('/generate-lecture', authenticateToken, async (req, res) => {
@@ -225,3 +226,30 @@ router.get('/resume/:lectureId', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+
+// Generate flashcards from document or raw text using OpenRouter
+router.post('/flashcards', authenticateToken, async (req, res) => {
+  try {
+    const { documentId, text, count = 12 } = req.body;
+
+    if (!documentId && !text) {
+      return res.status(400).json({ error: 'Provide documentId or text' });
+    }
+
+    let sourceText = text;
+    if (documentId) {
+      const doc = await Document.findOne({ id: documentId, userId: req.user.id, isActive: true });
+      if (!doc) return res.status(404).json({ error: 'Document not found' });
+      if (doc.processingStatus !== 'completed') {
+        return res.status(400).json({ error: 'Document is still being processed', status: doc.processingStatus });
+      }
+      sourceText = doc.extractedText;
+    }
+
+    const result = await aiService.generateFlashcards(sourceText, count);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Flashcards generation error:', error);
+    res.status(500).json({ error: 'Failed to generate flashcards', message: error.message });
+  }
+});

@@ -11,6 +11,7 @@ class AIService {
     
     this.currentKeyIndex = 0;
     this.openaiApiKey = process.env.OPENAI_API_KEY;
+    this.openrouterApiKey = process.env.OPENROUTER_API_KEY;
     this.groqApiKeys = [
       process.env.GROQ_API_KEY,
       process.env.GROQ_API_KEY_2,
@@ -22,6 +23,7 @@ class AIService {
     this.currentGroqKeyIndex = 0;
     this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
     this.groqBaseUrl = 'https://api.groq.com/openai/v1';
+    this.openRouterBaseUrl = 'https://openrouter.ai/api/v1';
 
     if (this.geminiApiKeys.length > 0) {
       console.log(`🤖 Gemini AI initialized with ${this.geminiApiKeys.length} API keys`);
@@ -34,11 +36,98 @@ class AIService {
     } else {
       console.warn('No Groq API keys available. Add GROQ_API_KEY to .env for faster inference.');
     }
+
+    if (this.openrouterApiKey) {
+      console.log('🧭 OpenRouter API key available for flashcards generation');
+    } else {
+      console.warn('No OpenRouter API key set. Set OPENROUTER_API_KEY in .env to enable flashcards.');
+    }
   }
 
   // Get current Groq API key
   getCurrentGroqApiKey() {
     return this.groqApiKeys[this.currentGroqKeyIndex];
+  }
+
+  // Generate flashcards from content using OpenRouter
+  async generateFlashcards(text, count = 12) {
+    if (!this.openrouterApiKey) {
+      throw new Error('OPENROUTER_API_KEY not configured');
+    }
+
+    const prompt = `You are an expert teacher. Create high-quality spaced-repetition flashcards from the content.
+
+Content:
+${text.substring(0, 8000)}
+
+Return ONLY JSON with this exact shape (no markdown, no comments):
+{
+  "cards": [
+    {
+      "front": "concise question prompt",
+      "back": "clear answer",
+      "hint": "short hint or mnemonic",
+      "difficulty": "easy|medium|hard",
+      "tags": ["topic", "concept"]
+    }
+  ]
+}`;
+
+    const modelsToTry = [
+      'openai/gpt-4o-mini',
+      'meta-llama/llama-3.1-8b-instruct',
+      'google/gemini-flash-1.5'
+    ];
+
+    for (let i = 0; i < modelsToTry.length; i++) {
+      const model = modelsToTry[i];
+      try {
+        const response = await axios.post(
+          `${this.openRouterBaseUrl}/chat/completions`,
+          {
+            model,
+            messages: [
+              { role: 'system', content: 'You produce only strict JSON per user schema. No markdown fences.' },
+              { role: 'user', content: prompt }
+            ],
+            temperature: 0.5,
+            max_tokens: 1200,
+            response_format: { type: 'json_object' }
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${this.openrouterApiKey}`,
+              'Content-Type': 'application/json',
+              // Optional but recommended by OpenRouter for routing/quotas
+              'HTTP-Referer': process.env.OPENROUTER_SITE || 'http://localhost:3000',
+              'X-Title': 'Noteflow Flashcards'
+            }
+          }
+        );
+
+        if (!response.data?.choices?.length) {
+          throw new Error('No choices in OpenRouter response');
+        }
+
+        let content = response.data.choices[0]?.message?.content || '';
+        if (content.startsWith('```')) {
+          content = content.replace(/^```json\s*/i, '').replace(/^```/i, '').replace(/```\s*$/i, '');
+        }
+        const parsed = JSON.parse(content);
+        if (!Array.isArray(parsed.cards)) {
+          throw new Error('Invalid flashcards format');
+        }
+        parsed.cards = parsed.cards.slice(0, count);
+        return parsed;
+      } catch (error) {
+        const code = error.response?.data?.error?.code || error.response?.status;
+        console.warn(`OpenRouter model ${model} failed (${code}). Trying next if available...`);
+        if (i === modelsToTry.length - 1) {
+          console.error('OpenRouter flashcards error:', error.response?.data || error.message);
+          throw new Error('Failed to generate flashcards');
+        }
+      }
+    }
   }
 
   // Switch to next Groq API key
@@ -1538,32 +1627,23 @@ Return JSON:
   // Handle interactive Q&A with context maintenance
   async handleInteractiveQuestion(question, lectureContext, slideContext, conversationHistory = []) {
     try {
-      const contextPrompt = `
-You are an AI tutor conducting an interactive lecture. Maintain context throughout the conversation.
+      const contextPrompt = `You are an AI tutor. Answer STRICTLY based on the provided slide content and lecture context. If the answer is not supported by the content, say you cannot answer from the material and briefly suggest where to look in the slide.
 
-LECTURE CONTEXT:
-Title: ${lectureContext.title}
-Current Slide: ${slideContext.title}
-Slide Content: ${slideContext.content}
+LECTURE: ${lectureContext.title}
+SLIDE: ${slideContext.title}
+CONTENT:
+${(slideContext.content || '').slice(0, 3000)}
 
-CONVERSATION HISTORY:
-${conversationHistory.map(msg => `${msg.role}: ${msg.content}`).join('\n')}
+HISTORY:
+${conversationHistory.map(m=>`${m.role}: ${m.content}`).join('\n').slice(0,1500)}
 
-STUDENT QUESTION: ${question}
+QUESTION: ${question}
 
-Instructions:
-1. Answer the question in context of the current lecture
-2. Keep responses concise but helpful
-3. If the question is off-topic, gently redirect to lecture content
-4. Use the conversation history to maintain continuity
-5. End with a brief question to keep engagement
-
-Respond in JSON format (no markdown code blocks, just pure JSON):
-{
-  "answer": "Your response to the student",
-  "followUpQuestion": "Optional follow-up question",
-  "redirectToSlide": null or slideId if should redirect,
-  "confidence": 0.8
+Return ONLY JSON (no markdown): {
+  "answer": string, // concise, grounded in slide
+  "followUpQuestion": string | null,
+  "redirectToSlide": number | null, // choose a slide id only if clearly better
+  "confidence": number // 0..1
 }`;
 
       const response = await axios.post(
