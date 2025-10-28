@@ -42,6 +42,9 @@ router.post('/generate', authenticateToken, checkSubscription, incrementQueryCou
   try {
     const { documentId, questionCount = 5, difficulty = 'medium' } = req.body;
 
+    console.log('Quiz generation - Document ID:', documentId);
+    console.log('Quiz generation - User ID:', req.user.id);
+
     // Get document
     const document = await Document.findOne({
       id: documentId,
@@ -51,10 +54,13 @@ router.post('/generate', authenticateToken, checkSubscription, incrementQueryCou
     });
 
     if (!document) {
+      console.log('Quiz generation - Document not found');
       return res.status(404).json({
         error: 'Document not found or not processed'
       });
     }
+
+    console.log('Quiz generation - Document found:', document.originalName);
 
     // Generate quiz using AI
     const quizData = await aiService.generateQuiz(
@@ -63,6 +69,8 @@ router.post('/generate', authenticateToken, checkSubscription, incrementQueryCou
       questionCount
     );
 
+    console.log('Quiz generation - AI generated quiz data:', quizData);
+
     // Create quiz record
     const quiz = new Quiz({
       documentId: document.id,
@@ -70,6 +78,7 @@ router.post('/generate', authenticateToken, checkSubscription, incrementQueryCou
       title: `Quiz: ${document.originalName}`,
       description: `Generated quiz based on ${document.metadata.subject}`,
       questions: quizData.questions.map((q, index) => ({
+        id: `q_${index + 1}`, // Add unique ID for each question
         type: q.type,
         question: q.question,
         options: q.options || [],
@@ -83,6 +92,8 @@ router.post('/generate', authenticateToken, checkSubscription, incrementQueryCou
     });
 
     await quiz.save();
+
+    console.log('Quiz generation - Quiz saved with ID:', quiz.id);
 
     res.json({
       message: 'Quiz generated successfully',
@@ -135,28 +146,34 @@ router.post('/generate', authenticateToken, checkSubscription, incrementQueryCou
  */
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
+    console.log('Quiz route - Getting quiz by ID:', req.params.id);
+    console.log('Quiz route - User ID:', req.user.id);
+
     const quiz = await Quiz.findOne({
-      _id: req.params.id,
-      userId: req.user._id,
+      id: req.params.id,
+      userId: req.user.id,
       isActive: true
     });
 
     if (!quiz) {
+      console.log('Quiz route - Quiz not found');
       return res.status(404).json({
         error: 'Quiz not found'
       });
     }
 
+    console.log('Quiz route - Quiz found:', quiz.title);
+
     res.json({
       quiz: {
-        id: quiz._id,
+        id: quiz.id,
         title: quiz.title,
         description: quiz.description,
         questionCount: quiz.questions.length,
         timeLimit: quiz.timeLimit,
         passingScore: quiz.passingScore,
         questions: quiz.questions.map(q => ({
-          id: q._id,
+          id: q.id,
           type: q.type,
           question: q.question,
           options: q.options,
@@ -417,8 +434,11 @@ router.get('/', authenticateToken, async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    console.log('Quiz route - User ID:', req.user.id);
+    console.log('Quiz route - User object:', req.user);
+
     const quizzes = await Quiz.find({
-      userId: req.user.id, // Use req.user.id instead of req.user._id
+      userId: req.user.id,
       isActive: true
     }, {
       limit: limit,
@@ -426,14 +446,16 @@ router.get('/', authenticateToken, async (req, res) => {
       sort: { field: 'createdAt', direction: 'desc' }
     });
 
+    console.log('Quiz route - Found quizzes:', quizzes.length);
+
     const total = await Quiz.countDocuments({
-      userId: req.user.id, // Use req.user.id instead of req.user._id
+      userId: req.user.id,
       isActive: true
     });
 
     res.json({
       quizzes: quizzes.map(quiz => ({
-        id: quiz.id, // Use quiz.id instead of quiz._id
+        id: quiz.id,
         title: quiz.title,
         description: quiz.description,
         questionCount: quiz.questions.length,

@@ -83,33 +83,54 @@ class Quiz {
       const db = getFirestore();
       let query = db.collection('quizzes');
 
-      // Apply filters - only include defined values
-      Object.keys(filters).forEach(key => {
-        if (filters[key] !== undefined && filters[key] !== null) {
-          query = query.where(key, '==', filters[key]);
-        }
-      });
-
-      // Apply pagination
-      if (options.limit) {
-        query = query.limit(options.limit);
-      }
-      if (options.offset) {
-        query = query.offset(options.offset);
-      }
-
-      // Apply sorting
-      if (options.sort) {
-        query = query.orderBy(options.sort.field, options.sort.direction || 'desc');
-      } else {
-        query = query.orderBy('createdAt', 'desc');
+      // Use only userId filter to avoid composite index issues
+      if (filters.userId) {
+        query = query.where('userId', '==', filters.userId);
       }
 
       const snapshot = await query.get();
-      return snapshot.docs.map(doc => {
-        const data = doc.data();
-        return new Quiz({ id: doc.id, ...data });
-      });
+      
+      // Filter in memory to avoid Firestore index requirements
+      let quizzes = snapshot.docs
+        .map(doc => {
+          const data = doc.data();
+          return new Quiz({ id: doc.id, ...data });
+        })
+        .filter(quiz => {
+          // Apply all filters in memory
+          return Object.keys(filters).every(key => {
+            if (key === 'id') return quiz.id === filters[key];
+            if (key === 'userId') return quiz.userId === filters[key];
+            if (key === 'isActive') return quiz.isActive === filters[key];
+            return true;
+          });
+        });
+
+      // Apply sorting
+      if (options.sort) {
+        quizzes.sort((a, b) => {
+          const field = options.sort.field;
+          const direction = options.sort.direction || 'desc';
+          if (direction === 'desc') {
+            return new Date(b[field]) - new Date(a[field]);
+          } else {
+            return new Date(a[field]) - new Date(b[field]);
+          }
+        });
+      } else {
+        // Default sort by createdAt desc
+        quizzes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      }
+
+      // Apply pagination
+      if (options.offset) {
+        quizzes = quizzes.slice(options.offset);
+      }
+      if (options.limit) {
+        quizzes = quizzes.slice(0, options.limit);
+      }
+
+      return quizzes;
     } catch (error) {
       console.error('Error finding quizzes:', error);
       throw error;
@@ -121,25 +142,30 @@ class Quiz {
     try {
       const db = getFirestore();
       let query = db.collection('quizzes')
-        .where('userId', '==', userId)
-        .where('isActive', '==', true);
-
-      // Apply pagination
-      if (options.limit) {
-        query = query.limit(options.limit);
-      }
-      if (options.offset) {
-        query = query.offset(options.offset);
-      }
-
-      // Apply sorting
-      query = query.orderBy('createdAt', 'desc');
+        .where('userId', '==', userId);
 
       const snapshot = await query.get();
-      return snapshot.docs.map(doc => {
-        const data = doc.data();
-        return new Quiz({ id: doc.id, ...data });
-      });
+      
+      // Filter in memory to avoid Firestore index requirements
+      let quizzes = snapshot.docs
+        .map(doc => {
+          const data = doc.data();
+          return new Quiz({ id: doc.id, ...data });
+        })
+        .filter(quiz => quiz.isActive === true);
+
+      // Apply sorting
+      quizzes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+      // Apply pagination
+      if (options.offset) {
+        quizzes = quizzes.slice(options.offset);
+      }
+      if (options.limit) {
+        quizzes = quizzes.slice(0, options.limit);
+      }
+
+      return quizzes;
     } catch (error) {
       console.error('Error finding quizzes by user ID:', error);
       throw error;
@@ -150,22 +176,44 @@ class Quiz {
   static async findOne(filters) {
     try {
       const db = getFirestore();
-      let query = db.collection('quizzes');
-
-      // Apply filters
-      Object.keys(filters).forEach(key => {
-        query = query.where(key, '==', filters[key]);
-      });
-
-      const snapshot = await query.limit(1).get();
       
-      if (snapshot.empty) {
-        return null;
+      // If we have an ID filter, use direct document lookup
+      if (filters.id) {
+        const doc = await db.collection('quizzes').doc(filters.id).get();
+        if (!doc.exists) {
+          return null;
+        }
+        const data = doc.data();
+        return new Quiz({ id: doc.id, ...data });
+      }
+      
+      // For other filters, get all documents and filter in memory
+      let query = db.collection('quizzes');
+      
+      // Use only userId filter to avoid composite index issues
+      if (filters.userId) {
+        query = query.where('userId', '==', filters.userId);
       }
 
-      const doc = snapshot.docs[0];
-      const data = doc.data();
-      return new Quiz({ id: doc.id, ...data });
+      const snapshot = await query.get();
+      
+      // Filter in memory to avoid Firestore index requirements
+      let quizzes = snapshot.docs
+        .map(doc => {
+          const data = doc.data();
+          return new Quiz({ id: doc.id, ...data });
+        })
+        .filter(quiz => {
+          // Apply all filters in memory
+          return Object.keys(filters).every(key => {
+            if (key === 'id') return quiz.id === filters[key];
+            if (key === 'userId') return quiz.userId === filters[key];
+            if (key === 'isActive') return quiz.isActive === filters[key];
+            return true;
+          });
+        });
+
+      return quizzes.length > 0 ? quizzes[0] : null;
     } catch (error) {
       console.error('Error finding quiz:', error);
       throw error;
@@ -178,13 +226,30 @@ class Quiz {
       const db = getFirestore();
       let query = db.collection('quizzes');
 
-      // Apply filters
-      Object.keys(filters).forEach(key => {
-        query = query.where(key, '==', filters[key]);
-      });
+      // Use only userId filter to avoid composite index issues
+      if (filters.userId) {
+        query = query.where('userId', '==', filters.userId);
+      }
 
       const snapshot = await query.get();
-      return snapshot.size;
+      
+      // Filter in memory to avoid Firestore index requirements
+      let quizzes = snapshot.docs
+        .map(doc => {
+          const data = doc.data();
+          return new Quiz({ id: doc.id, ...data });
+        })
+        .filter(quiz => {
+          // Apply all filters in memory
+          return Object.keys(filters).every(key => {
+            if (key === 'id') return quiz.id === filters[key];
+            if (key === 'userId') return quiz.userId === filters[key];
+            if (key === 'isActive') return quiz.isActive === filters[key];
+            return true;
+          });
+        });
+
+      return quizzes.length;
     } catch (error) {
       console.error('Error counting quizzes:', error);
       throw error;
