@@ -310,8 +310,8 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
     const percentage = Math.round((totalScore / quiz.totalPoints) * 100);
     const passed = percentage >= quiz.passingScore;
 
-    // Add attempt to quiz
-    await quiz.addAttempt(req.user._id, answers, timeSpent);
+    // Add attempt to quiz (use consistent user id)
+    await quiz.addAttempt(req.user.id, answers, timeSpent);
 
     // Update user's skill score if they passed
     if (passed) {

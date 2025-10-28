@@ -369,8 +369,103 @@ const Quiz: React.FC = () => {
                   </Tooltip>
                 ) : (
                   <Box>
-                    <Typography variant="subtitle1" sx={{ mb: 1 }}>Results</Typography>
-                    <pre style={{ margin: 0 }}>{JSON.stringify(result, null, 2)}</pre>
+                    <Typography variant="h6" sx={{ mb: 2 }}>Quiz Report</Typography>
+                    {/* Summary */}
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
+                      <Card sx={{ flex: 1 }}>
+                        <CardContent>
+                          <Typography variant="subtitle2" color="text.secondary">Score</Typography>
+                          <Typography variant="h5">
+                            {(result.results?.score ?? 0)} / {activeQuiz.questions.reduce((s, q) => s + (q.points || 1), 0)} points
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            Questions: {activeQuiz.questions.length}
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                      <Card sx={{ flex: 1 }}>
+                        <CardContent>
+                          <Typography variant="subtitle2" color="text.secondary">Percentage</Typography>
+                          <Stack direction="row" alignItems="center" spacing={1}>
+                            <Typography variant="h5">{result.results?.percentage ?? 0}%</Typography>
+                            {result.results?.passed ? (
+                              <Chip label={`Passed (≥ ${activeQuiz.passingScore || 70}%)`} color="success" size="small" />
+                            ) : (
+                              <Chip label={`Failed (< ${activeQuiz.passingScore || 70}%)`} color="error" size="small" />
+                            )}
+                          </Stack>
+                        </CardContent>
+                      </Card>
+                      <Card sx={{ flex: 1 }}>
+                        <CardContent>
+                          <Typography variant="subtitle2" color="text.secondary">Time Spent</Typography>
+                          <Typography variant="h5">{(result.results?.timeSpent ?? 0)}s</Typography>
+                        </CardContent>
+                      </Card>
+                    </Stack>
+
+                    {/* Focus Areas */}
+                    {(() => {
+                      const incorrect = (result.results?.answers || []).filter((a: any) => a && a.isCorrect === false);
+                      const stop = new Set(['the','a','an','and','or','of','to','in','for','on','is','are','with','by','as','at','from','that','this','it','be','can']);
+                      const text = incorrect.map((a: any) => (activeQuiz.questions.find(q => q.id === a.questionId)?.question || '')).join(' ');
+                      const counts: Record<string, number> = {};
+                      text.toLowerCase().split(/[^a-z0-9]+/).forEach((w: string) => {
+                        if (!w || stop.has(w) || w.length < 3) return;
+                        counts[w] = (counts[w] || 0) + 1;
+                      });
+                      const top = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([w])=>w);
+                      return (
+                        <Card sx={{ mb: 2 }}>
+                          <CardContent>
+                            <Typography variant="subtitle1" sx={{ mb: 1 }}>Focus areas</Typography>
+                            {incorrect.length === 0 ? (
+                              <Typography variant="body2" color="text.secondary">Great job! No weak areas detected.</Typography>
+                            ) : (
+                              <Stack direction="row" spacing={1} flexWrap="wrap">
+                                {top.length > 0 ? top.map((w, i) => (
+                                  <Chip key={i} label={w} variant="outlined" />
+                                )) : (
+                                  <Typography variant="body2" color="text.secondary">Review the questions you missed below.</Typography>
+                                )}
+                              </Stack>
+                            )}
+                          </CardContent>
+                        </Card>
+                      );
+                    })()}
+
+                    {/* Breakdown */}
+                    <Card>
+                      <CardContent>
+                        <Typography variant="subtitle1" sx={{ mb: 2 }}>Question breakdown</Typography>
+                        <Stack spacing={1}>
+                          {activeQuiz.questions.map((q, idx) => {
+                            const ra = (result.results?.answers || []).find((a: any) => a.questionId === q.id);
+                            const status = ra?.isCorrect === true ? 'correct' : (ra ? 'incorrect' : 'not answered');
+                            return (
+                              <Box key={q.id} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                                <Stack direction="row" alignItems="center" justifyContent="space-between">
+                                  <Typography variant="body1">{idx + 1}. {q.question}</Typography>
+                                  {status === 'correct' ? (
+                                    <Chip label="Correct" color="success" size="small" />
+                                  ) : status === 'incorrect' ? (
+                                    <Chip label="Incorrect" color="error" size="small" />
+                                  ) : (
+                                    <Chip label="Not answered" size="small" />
+                                  )}
+                                </Stack>
+                                {status !== 'correct' && (
+                                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                                    Correct answer: <strong>hidden</strong>
+                                  </Typography>
+                                )}
+                              </Box>
+                            );
+                          })}
+                        </Stack>
+                      </CardContent>
+                    </Card>
                   </Box>
                 )}
               </Stack>

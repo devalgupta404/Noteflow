@@ -25,16 +25,26 @@ class Quiz {
       // Calculate total points
       this.totalPoints = this.questions.reduce((total, question) => total + (question.points || 1), 0);
 
+      // Sanitize attempts to avoid undefined values (Firestore rejects undefined)
+      const sanitizedAttempts = (this.attempts || []).map(attempt => ({
+        userId: attempt.userId || null,
+        answers: Array.isArray(attempt.answers) ? attempt.answers : [],
+        score: typeof attempt.score === 'number' ? attempt.score : 0,
+        percentage: typeof attempt.percentage === 'number' ? attempt.percentage : 0,
+        timeSpent: typeof attempt.timeSpent === 'number' ? attempt.timeSpent : 0,
+        completedAt: attempt.completedAt || new Date()
+      }));
+
       const quizData = {
         documentId: this.documentId,
         userId: this.userId,
         title: this.title,
-        description: this.description,
+        description: this.description ?? null,
         questions: this.questions,
         totalPoints: this.totalPoints,
         timeLimit: this.timeLimit,
         passingScore: this.passingScore,
-        attempts: this.attempts,
+        attempts: sanitizedAttempts,
         isActive: this.isActive,
         createdAt: this.createdAt,
         updatedAt: new Date()
@@ -265,7 +275,7 @@ class Quiz {
       const question = this.questions.find(q => q.id === answer.questionId);
       if (!question) return null;
       
-      const isCorrect = this.checkAnswer(answer.questionId, answer.answer);
+      const isCorrect = answer.answer != null ? this.checkAnswer(answer.questionId, String(answer.answer)) : false;
       const points = isCorrect ? (question.points || 1) : 0;
       
       if (isCorrect) {
@@ -284,11 +294,11 @@ class Quiz {
     const percentage = Math.round((score / this.totalPoints) * 100);
     
     this.attempts.push({
-      userId,
+      userId: userId || null,
       answers: attemptAnswers,
       score,
       percentage,
-      timeSpent,
+      timeSpent: typeof timeSpent === 'number' ? timeSpent : 0,
       completedAt: new Date()
     });
     
