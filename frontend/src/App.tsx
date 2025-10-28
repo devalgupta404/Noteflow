@@ -15,6 +15,7 @@ import AITutor from './components/AITutor';
 import Quiz from './components/Quiz';
 import VoiceSynthesis from './components/VoiceSynthesis';
 import Marketplace from './components/Marketplace';
+import Sidebar from './components/Sidebar';
 
 const theme = createTheme({
   palette: {
@@ -82,24 +83,9 @@ function App() {
       <CssBaseline />
       <AuthContext.Provider value={{ user, loading }}>
         <Router>
-        <Box sx={{ flexGrow: 1 }}>
-          {user && (
-            <AppBar position="static">
-              <Toolbar>
-                <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-                  NoteFlow - AI Learning Platform
-                </Typography>
-                <Typography variant="body2" sx={{ mr: 2 }}>
-                  Welcome, {user.displayName || user.email}
-                </Typography>
-                <Button color="inherit" onClick={handleLogout}>
-                  Logout
-                </Button>
-              </Toolbar>
-            </AppBar>
-          )}
-          
-          <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+        <Box sx={{ display: 'flex' }}>
+          {user && <Sidebar userName={user.displayName || user.email || 'User'} subscriptionLabel="FREE" />}
+          <Container maxWidth="xl" sx={{ mt: 4, mb: 4, ml: { xs: 0, md: user ? '90px' : 0 } }}>
             <Routes>
               {!user ? (
                 <>

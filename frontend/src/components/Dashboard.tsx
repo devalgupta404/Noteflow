@@ -13,17 +13,25 @@ import {
   Alert,
   CircularProgress,
   Container,
+  TextField,
+  InputAdornment,
+  Avatar,
 } from '@mui/material';
 import {
   Upload as UploadIcon,
   School as SchoolIcon,
   Quiz as QuizIcon,
-  RecordVoiceOver as VoiceIcon,
   Work as WorkIcon,
   Description as DocumentIcon,
+  Search as SearchIcon,
+  MonetizationOn as CoinIcon,
+  Logout as LogoutIcon,
+  Person as PersonIcon,
 } from '@mui/icons-material';
 import { authAPI, documentsAPI, quizAPI } from '../services/api';
 import { useAuth } from '../App';
+import { signOut } from 'firebase/auth';
+import { auth } from '../firebase';
 
 interface UserProfile {
   id: string;
@@ -63,8 +71,6 @@ const Dashboard: React.FC = () => {
   const loadDashboardData = async () => {
     try {
       setLoading(true);
-      
-      // Use Firebase user data as fallback
       if (user) {
         setProfile({
           id: user.uid,
@@ -81,31 +87,24 @@ const Dashboard: React.FC = () => {
           reputationScore: 0,
         });
       }
-      
-      // Try to load user profile from backend
       try {
         const profileResponse = await authAPI.getProfile();
         setProfile(profileResponse.data.user);
       } catch (err) {
         console.log('Backend profile not available, using Firebase user data');
       }
-      
-      // Load documents
       try {
         const documentsResponse = await documentsAPI.getAll();
         setDocuments(documentsResponse.data.documents || []);
       } catch (err) {
         console.log('No documents found or error loading documents');
       }
-      
-      // Load quizzes
       try {
         const quizzesResponse = await quizAPI.getAll();
         setQuizzes(quizzesResponse.data.quizzes || []);
       } catch (err) {
         console.log('No quizzes found or error loading quizzes');
       }
-      
     } catch (error: any) {
       console.error('Error loading dashboard data:', error);
       setError('Failed to load dashboard data');
@@ -117,7 +116,7 @@ const Dashboard: React.FC = () => {
   const handleUpgradeSubscription = async () => {
     try {
       await authAPI.upgradeSubscription();
-      await loadDashboardData(); // Reload to get updated profile
+      await loadDashboardData();
     } catch (error: any) {
       console.error('Error upgrading subscription:', error);
       setError('Failed to upgrade subscription');
@@ -133,171 +132,108 @@ const Dashboard: React.FC = () => {
   }
 
   return (
-    <Container maxWidth="lg">
-      <Typography variant="h4" component="h1" gutterBottom>
-        Welcome to NoteFlow
-      </Typography>
-      
+    <Container maxWidth="xl" sx={{ py: 2 }}>
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
         </Alert>
       )}
 
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {/* User Profile Card */}
-        <Card>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Profile
-            </Typography>
-            {profile && (
-              <>
-                <Typography variant="body1">
-                  {profile.firstName} {profile.lastName}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {profile.email}
-                </Typography>
-                <Box sx={{ mt: 2 }}>
-                  <Chip
-                    label={profile.subscription.type.toUpperCase()}
-                    color={profile.subscription.type === 'premium' ? 'primary' : 'default'}
-                    size="small"
-                  />
-                </Box>
-                {profile.subscription.type === 'free' && (
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={handleUpgradeSubscription}
-                    sx={{ mt: 1 }}
-                  >
-                    Upgrade to Premium
-                  </Button>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
+      {/* Responsive 2-column layout (global sidebar handles nav) */}
+      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: '1fr 320px' } }}>
 
-        {/* Quick Actions */}
-        <Card>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Quick Actions
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-              <Button
-                variant="outlined"
-                startIcon={<UploadIcon />}
-                href="/upload"
-              >
-                Upload Document
-              </Button>
-              <Button
-                variant="outlined"
-                startIcon={<SchoolIcon />}
-                href="/tutor"
-              >
-                AI Tutor
-              </Button>
-              <Button
-                variant="outlined"
-                startIcon={<QuizIcon />}
-                href="/quiz"
-              >
-                Take Quiz
-              </Button>
-              <Button
-                variant="outlined"
-                startIcon={<VoiceIcon />}
-                href="/voice"
-              >
-                Voice Tools
-              </Button>
+        {/* Main content */}
+        <Box>
+          {/* Top bar with search and credits/profile */}
+          <Card sx={{ p: 2, mb: 2, borderRadius: 4 }}>
+            <Box display="flex" alignItems="center" gap={2}>
+              <TextField
+                fullWidth
+                placeholder="Search something..."
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon />
+                    </InputAdornment>
+                  ),
+                }}
+              />
+              <Chip icon={<CoinIcon />} label={`${profile?.subscription.dailyQueries || 0}/${profile?.subscription.maxDailyQueries || 10}`} color="primary" sx={{ borderRadius: 2 }} />
+              <Avatar sx={{ width: 36, height: 36 }} />
             </Box>
-          </CardContent>
-        </Card>
+          </Card>
 
-        {/* Recent Documents */}
-        <Card>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Recent Documents
-            </Typography>
+          {/* Action cards using CSS grid */}
+          <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' }, mb: 2 }}>
+            <Card sx={{ p: 2, borderRadius: 4, bgcolor: 'rgba(123,97,255,0.12)' }}>
+              <Typography variant="subtitle2" color="text.secondary">Get started</Typography>
+              <Typography variant="h6" sx={{ mb: 1 }}>AI Tutor</Typography>
+              <Button href="/tutor" variant="contained" startIcon={<SchoolIcon />}>Open</Button>
+            </Card>
+            <Card sx={{ p: 2, borderRadius: 4, bgcolor: 'rgba(255,159,64,0.15)' }}>
+              <Typography variant="subtitle2" color="text.secondary">Documents</Typography>
+              <Typography variant="h6" sx={{ mb: 1 }}>Upload</Typography>
+              <Button href="/upload" variant="contained" color="secondary" startIcon={<UploadIcon />}>Upload</Button>
+            </Card>
+            <Card sx={{ p: 2, borderRadius: 4, bgcolor: 'rgba(255,64,129,0.12)' }}>
+              <Typography variant="subtitle2" color="text.secondary">Practice</Typography>
+              <Typography variant="h6" sx={{ mb: 1 }}>Take Quiz</Typography>
+              <Button href="/quiz" variant="contained" color="success" startIcon={<QuizIcon />}>Start</Button>
+            </Card>
+          </Box>
+
+          {/* Marketplace banner */}
+          <Card sx={{ p: 3, borderRadius: 4 }}>
+            <Box display="flex" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={2}>
+              <Box>
+                <Typography variant="h6">Freelance Marketplace</Typography>
+                <Typography variant="body2" color="text.secondary">Find tutors and gigs that match your skills.</Typography>
+              </Box>
+              <Button href="/marketplace" variant="contained" startIcon={<WorkIcon />}>Browse Gigs</Button>
+            </Box>
+          </Card>
+        </Box>
+
+        {/* Right rail */}
+        <Box>
+          <Card sx={{ p: 2, mb: 2, borderRadius: 4 }}>
+            <Typography variant="h6" gutterBottom>Recent Documents</Typography>
             {documents.length > 0 ? (
               <List>
                 {documents.slice(0, 5).map((doc) => (
                   <React.Fragment key={doc.id}>
-                    <ListItem>
+                    <ListItem dense>
                       <DocumentIcon sx={{ mr: 1 }} />
-                      <ListItemText
-                        primary={doc.title}
-                        secondary={`${doc.subject} • ${doc.status}`}
-                      />
+                      <ListItemText primary={doc.title} secondary={`${doc.subject} • ${doc.status}`} />
                     </ListItem>
                     <Divider />
                   </React.Fragment>
                 ))}
               </List>
             ) : (
-              <Typography variant="body2" color="text.secondary">
-                No documents uploaded yet
-              </Typography>
+              <Typography variant="body2" color="text.secondary">No documents uploaded yet</Typography>
             )}
-          </CardContent>
-        </Card>
+          </Card>
 
-        {/* Recent Quizzes */}
-        <Card>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Recent Quizzes
-            </Typography>
+          <Card sx={{ p: 2, borderRadius: 4 }}>
+            <Typography variant="h6" gutterBottom>Recent Quizzes</Typography>
             {quizzes.length > 0 ? (
               <List>
                 {quizzes.slice(0, 5).map((quiz) => (
                   <React.Fragment key={quiz.id}>
-                    <ListItem>
+                    <ListItem dense>
                       <QuizIcon sx={{ mr: 1 }} />
-                      <ListItemText
-                        primary={quiz.title}
-                        secondary={`${quiz.difficulty} • ${quiz.questionCount} questions`}
-                      />
+                      <ListItemText primary={quiz.title} secondary={`${quiz.difficulty} • ${quiz.questionCount} questions`} />
                     </ListItem>
                     <Divider />
                   </React.Fragment>
                 ))}
               </List>
             ) : (
-              <Typography variant="body2" color="text.secondary">
-                No quizzes taken yet
-              </Typography>
+              <Typography variant="body2" color="text.secondary">No quizzes taken yet</Typography>
             )}
-          </CardContent>
-        </Card>
-
-        {/* Marketplace */}
-        <Card>
-          <CardContent>
-            <Box display="flex" justifyContent="space-between" alignItems="center">
-              <Typography variant="h6">
-                Marketplace
-              </Typography>
-              <Button
-                variant="contained"
-                startIcon={<WorkIcon />}
-                href="/marketplace"
-              >
-                Browse Gigs
-              </Button>
-            </Box>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              Find tutoring opportunities and monetize your skills
-            </Typography>
-          </CardContent>
-        </Card>
+          </Card>
+        </Box>
       </Box>
     </Container>
   );

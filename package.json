@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "lucide-react": "^0.548.0",
     "mammoth": "^1.11.0",
     "natural": "^8.1.0",
     "pdf-parse": "^2.4.5",
